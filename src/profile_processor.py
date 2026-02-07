@@ -47,15 +47,38 @@ class LinkedInProfileProcessor:
             logger.info("Connecting to linkedin-mcp-server...")
 
             # Configure the MCP server parameters
+            # Extract li_at cookie from session file and pass as environment variable
+            import os
+            import json
+
+            env = dict(os.environ)
+            session_file = os.path.expanduser('~/.linkedin-mcp/session.json')
+
+            # Try to extract li_at cookie from session file
+            try:
+                with open(session_file, 'r') as f:
+                    session_data = json.load(f)
+                    cookies = session_data.get('cookies', [])
+                    li_at_cookie = next((c['value'] for c in cookies if c.get('name') == 'li_at'), None)
+
+                    if li_at_cookie:
+                        env['LINKEDIN_COOKIE'] = li_at_cookie
+                        logger.info(f"Extracted li_at cookie from session file (length: {len(li_at_cookie)})")
+                    else:
+                        logger.warning("Could not find li_at cookie in session file")
+            except Exception as e:
+                logger.warning(f"Could not extract cookie from session file: {e}")
+
             server_params = StdioServerParameters(
                 command="uvx",
                 args=["linkedin-scraper-mcp"],
-                env=None
+                env=env
             )
 
-            # Create stdio client connection
-            self.stdio_transport = await stdio_client(server_params)
-            self.stdio, self.write = self.stdio_transport
+            # Create stdio client connection (it's an async context manager)
+            stdio_context = stdio_client(server_params)
+            self.stdio, self.write = await stdio_context.__aenter__()
+            self._stdio_context = stdio_context
 
             # Create session
             self.session = ClientSession(self.stdio, self.write)
@@ -75,7 +98,9 @@ class LinkedInProfileProcessor:
         try:
             if self.session:
                 await self.session.__aexit__(None, None, None)
-                logger.info("Disconnected from MCP server")
+            if hasattr(self, '_stdio_context'):
+                await self._stdio_context.__aexit__(None, None, None)
+            logger.info("Disconnected from MCP server")
         except Exception as e:
             logger.warning(f"Error disconnecting from MCP server: {e}")
 
@@ -113,10 +138,16 @@ class LinkedInProfileProcessor:
                 logger.info(f"Fetching profile: {profile_url}")
 
                 # Call the get_person_profile tool via MCP
+                # The MCP server expects 'linkedin_username' parameter (the profile URL)
                 result = await self.session.call_tool(
                     "get_person_profile",
-                    arguments={"url": profile_url}
+                    arguments={"linkedin_username": profile_url}
                 )
+
+                # Debug: log the full result structure
+                logger.info(f"MCP Result type: {type(result)}")
+                logger.info(f"MCP Result: {result}")
+                logger.info(f"MCP Result content: {result.content if result else 'None'}")
 
                 # Extract profile data from result
                 if result and len(result.content) > 0:
@@ -124,6 +155,8 @@ class LinkedInProfileProcessor:
                     profile_data = result.content[0].text if hasattr(result.content[0], 'text') else str(result.content[0])
 
                     logger.info(f"Successfully fetched profile: {profile_url}")
+                    logger.info(f"Raw data type: {type(profile_data)}")
+                    logger.info(f"Raw data preview (first 1000 chars): {str(profile_data)[:1000]}")
 
                     # Apply rate limiting delay before next request
                     await self._rate_limit_delay()

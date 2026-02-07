@@ -39,9 +39,9 @@ class ProfileDataCalculator:
 
     def _parse_profile_data(self, raw_data: Any) -> Dict[str, Any]:
         """
-        Parse the raw profile data from MCP server.
+        Parse the raw profile data from MCP server or RapidAPI.
 
-        The MCP server might return data in various formats (JSON string, dict, etc.)
+        The data might come in various formats (JSON string, dict, etc.)
         This method normalizes it into a consistent structure.
         """
         if not raw_data:
@@ -50,17 +50,71 @@ class ProfileDataCalculator:
         # If it's a string, try to parse as JSON
         if isinstance(raw_data, str):
             try:
-                return json.loads(raw_data)
+                raw_data = json.loads(raw_data)
             except json.JSONDecodeError:
                 logger.warning("Could not parse raw_data as JSON")
                 return {"raw_text": raw_data}
 
-        # If it's already a dict, return it
+        # If it's already a dict, check if it's Fresh API format
         if isinstance(raw_data, dict):
+            # Fresh API format has data nested under "data" key
+            if "data" in raw_data and isinstance(raw_data["data"], dict):
+                return self._normalize_fresh_api_format(raw_data["data"])
             return raw_data
 
         # Otherwise, convert to string
         return {"raw_text": str(raw_data)}
+
+    def _normalize_fresh_api_format(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Normalize Fresh API response format to a consistent structure.
+
+        Fresh API uses different field names than expected, so we map them.
+        """
+        normalized = {}
+
+        # Map Fresh API field names to expected names
+        normalized["name"] = data.get("full_name", "")
+        normalized["location"] = data.get("location", "")
+        normalized["current_company"] = data.get("company", "")
+
+        # Experience - Fresh API uses "experiences" array
+        if "experiences" in data:
+            normalized["experience"] = []
+            for exp in data["experiences"]:
+                normalized_exp = {
+                    "company": exp.get("company", ""),
+                    "title": exp.get("title", ""),
+                    "start": f"{exp.get('start_month', '')} {exp.get('start_year', '')}".strip(),
+                    "end": f"{exp.get('end_month', '')} {exp.get('end_year', '')}".strip() if exp.get('end_year') else ("Present" if exp.get('is_current') else ""),
+                    "description": exp.get("description", ""),
+                    "location": exp.get("location", "")
+                }
+                normalized["experience"].append(normalized_exp)
+
+        # Education - Fresh API uses "educations" array
+        if "educations" in data:
+            normalized["education"] = []
+            for edu in data["educations"]:
+                normalized_edu = {
+                    "school": edu.get("school", ""),
+                    "degree": edu.get("degree", ""),
+                    "field_of_study": edu.get("field_of_study", ""),
+                    "start": f"{edu.get('start_month', '')} {edu.get('start_year', '')}".strip(),
+                    "end": f"{edu.get('end_month', '')} {edu.get('end_year', '')}".strip()
+                }
+                normalized["education"].append(normalized_edu)
+
+        # Languages - Fresh API uses "languages" array (may be empty)
+        if "languages" in data and data["languages"]:
+            normalized["languages"] = data["languages"]
+
+        # Skills - Fresh API uses pipe-separated string
+        if "skills" in data and data["skills"]:
+            # Convert pipe-separated to array
+            normalized["skills"] = [s.strip() for s in data["skills"].split("|")]
+
+        return normalized
 
     def _parse_date(self, date_str: str) -> Optional[datetime]:
         """
@@ -326,6 +380,15 @@ class ProfileDataCalculator:
             # Get dates
             start = exp.get('start', exp.get('startDate', exp.get('start_date', '')))
             end = exp.get('end', exp.get('endDate', exp.get('end_date', '')))
+
+            # Handle date_range field (from Playwright scraper)
+            if not start and not end and 'date_range' in exp:
+                date_range = exp['date_range']
+                # Parse date ranges like "Jan 2020 - Present" or "2018 - 2020"
+                if isinstance(date_range, str) and ' - ' in date_range:
+                    parts = date_range.split(' - ')
+                    if len(parts) == 2:
+                        start, end = parts[0].strip(), parts[1].strip()
 
             # Handle date objects or dicts
             if isinstance(start, dict):

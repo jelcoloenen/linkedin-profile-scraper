@@ -36,7 +36,12 @@ session.json
 # Output files
 output/*.csv
 output/*.json
+output/raw_data/
 !output/.gitkeep
+
+# Input files with real data (keep private)
+input_profiles.csv
+test_standard_url.csv
 
 # IDE
 .vscode/
