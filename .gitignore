@@ -43,6 +43,11 @@ output/raw_data/
 input_profiles.csv
 test_standard_url.csv
 
+# Config files with business strategy (keep private)
+config/target_companies.txt
+config/target_schools.txt
+config/food_retailers.txt
+
 # IDE
 .vscode/
 .idea/

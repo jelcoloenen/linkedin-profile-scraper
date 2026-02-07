@@ -1,0 +1,8 @@
+# Target schools to match (fuzzy matching enabled)
+# Add one school name per line
+# Example:
+# Harvard Business School
+# Stanford Graduate School of Business
+# MIT Sloan School of Management
+# INSEAD
+# HEC Paris
